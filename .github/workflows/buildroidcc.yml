@@ -1,0 +1,70 @@
+name: build-droidcc
+on:
+  workflow_dispatch:
+  push:
+    paths: ['droidcc-src.zip', '.github/workflows/buildroidcc.yml']
+env:
+  LLVM_TAG: llvmorg-18.1.8
+  NDK_VER: r27c
+jobs:
+  llvm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - run: unzip -q droidcc-src.zip
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: out/llvm
+          key: llvm-${{ env.LLVM_TAG }}-${{ env.NDK_VER }}-v1
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: bash ci/llvm.sh
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llvm
+          path: out/llvm
+  extras:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: unzip -q droidcc-src.zip
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+      - run: bash ci/ninja.sh && bash ci/sysroot.sh
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extras
+          path: out/extras
+  apk:
+    needs: [llvm, extras]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: unzip -q droidcc-src.zip
+      - uses: actions/download-artifact@v4
+        with: { name: llvm, path: out/llvm }
+      - uses: actions/download-artifact@v4
+        with: { name: extras, path: out/extras }
+      - run: bash ci/assemble.sh
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.7' }
+      - run: gradle --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: droidcc-apk
+          path: app/build/outputs/apk/debug/*.apk
